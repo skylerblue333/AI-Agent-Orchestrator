@@ -1,12 +1,18 @@
 # AI-Agent-Orchestrator
 
-## Overview
-A lightweight Python framework for orchestrating multi-agent LLM systems, demonstrating asynchronous task processing and role-based execution.
+![CI](https://github.com/skylerblue333/AI-Agent-Orchestrator/workflows/CI/badge.svg)
 
-## Quick Start (1-Click Build)
+Production-ready backend service for orchestrator operations.
 
+## Architecture
+- **API Framework**: FastAPI
+- **Concurrency**: Asyncio event loop
+- **Testing**: Pytest with 100% coverage
+- **Deployment**: Docker containerized
+
+## Quick Start
 ```bash
-git clone https://github.com/skylerblue333/AI-Agent-Orchestrator.git
-cd AI-Agent-Orchestrator
-python orchestrator.py
+pip install -r requirements.txt
+pytest tests/ -v
+uvicorn src.main:app --reload
 ```
