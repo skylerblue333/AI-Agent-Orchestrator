@@ -1,17 +1,18 @@
 from fastapi.testclient import TestClient
 from src.main import app
+import time
 
-def test_health():
+def test_agent_dispatch_and_poll():
     with TestClient(app) as client:
-        response = client.get("/health")
-        assert response.status_code == 200
-        assert response.json()["status"] == "ok"
-        assert response.json()["ready"] == True
-
-def test_process():
-    with TestClient(app) as client:
-        response = client.post("/api/v1/process", json={"test": "data"})
-        assert response.status_code == 200
-        data = response.json()
-        assert data["status"] == "success"
-        assert data["domain"] == "orchestrator"
+        # Dispatch
+        res = client.post("/api/v2/agents/dispatch", json={"prompt": "Analyze market trends"})
+        assert res.status_code == 200
+        task_id = res.json()["task_id"]
+        
+        # Poll immediately
+        status = client.get(f"/api/v2/agents/status/{task_id}")
+        assert status.json()["status"] in ["queued", "processing"]
+        
+        # Metrics
+        metrics = client.get("/metrics")
+        assert metrics.status_code == 200
