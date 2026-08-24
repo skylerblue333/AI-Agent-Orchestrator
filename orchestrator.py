@@ -4,8 +4,8 @@ import asyncio
 import logging
 import re
 import time
+from collections.abc import Awaitable, Callable, Iterable
 from dataclasses import asdict, dataclass
-from typing import Awaitable, Callable, Iterable
 
 Handler = Callable[[str], Awaitable[str]]
 _NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$")
