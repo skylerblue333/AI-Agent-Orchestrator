@@ -1,18 +1,20 @@
-from fastapi.testclient import TestClient
-from src.main import app
-import time
+import json
+import subprocess
+import sys
 
-def test_agent_dispatch_and_poll():
-    with TestClient(app) as client:
-        # Dispatch
-        res = client.post("/api/v2/agents/dispatch", json={"prompt": "Analyze market trends"})
-        assert res.status_code == 200
-        task_id = res.json()["task_id"]
-        
-        # Poll immediately
-        status = client.get(f"/api/v2/agents/status/{task_id}")
-        assert status.json()["status"] in ["queued", "processing"]
-        
-        # Metrics
-        metrics = client.get("/metrics")
-        assert metrics.status_code == 200
+
+def test_cli_returns_structured_json() -> None:
+    completed = subprocess.run(
+        [sys.executable, "orchestrator.py", "release review"],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    payload = json.loads(completed.stdout)
+    assert payload["objective"] == "release review"
+    assert payload["output"] == "review: synthesis: research: release review"
+    assert [step["agent"] for step in payload["steps"]] == [
+        "research",
+        "synthesis",
+        "review",
+    ]
