@@ -13,17 +13,24 @@ from uuid import UUID, uuid4
 from fastapi import BackgroundTasks, FastAPI, HTTPException
 from pydantic import BaseModel, Field, field_validator
 
+from orchestrator import AgentSpec, Orchestrator, WorkflowError
+
 SERVICE_NAME = "sky-agent-orchestrator"
 MAX_TASKS = int(os.getenv("MAX_TASKS", "1000"))
 MAX_CONCURRENT_TASKS = int(os.getenv("MAX_CONCURRENT_TASKS", "8"))
+AGENT_TIMEOUT_SECONDS = float(os.getenv("AGENT_TIMEOUT_SECONDS", "10"))
 if MAX_TASKS < 1 or MAX_TASKS > 100_000:
     raise RuntimeError("MAX_TASKS must be between 1 and 100000")
 if MAX_CONCURRENT_TASKS < 1 or MAX_CONCURRENT_TASKS > 128:
     raise RuntimeError("MAX_CONCURRENT_TASKS must be between 1 and 128")
+if not 0.05 <= AGENT_TIMEOUT_SECONDS <= 120:
+    raise RuntimeError("AGENT_TIMEOUT_SECONDS must be between 0.05 and 120")
 
 logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"), format="%(asctime)s %(levelname)s %(name)s %(message)s")
 logger = logging.getLogger(SERVICE_NAME)
-app = FastAPI(title="Sky Agent Orchestrator", version="0.2.0")
+app = FastAPI(title="Sky Agent Orchestrator", version="0.3.0")
+
+ALLOWED_STAGES = ("plan", "execute", "review")
 
 
 class TaskStatus(StrEnum):
@@ -35,7 +42,7 @@ class TaskStatus(StrEnum):
 
 class DispatchRequest(BaseModel):
     objective: str = Field(min_length=1, max_length=4000)
-    stages: list[str] = Field(default_factory=lambda: ["plan", "execute", "review"], min_length=1, max_length=8)
+    stages: list[str] = Field(default_factory=lambda: list(ALLOWED_STAGES), min_length=1, max_length=3)
 
     @field_validator("objective")
     @classmethod
@@ -48,14 +55,12 @@ class DispatchRequest(BaseModel):
     @field_validator("stages")
     @classmethod
     def validate_stages(cls, values: list[str]) -> list[str]:
-        normalized: list[str] = []
-        for stage in values:
-            stage = stage.strip().lower()
-            if not stage or len(stage) > 64 or not all(ch.isalnum() or ch in "-_" for ch in stage):
-                raise ValueError("stages must use 1-64 alphanumeric, dash, or underscore characters")
-            if stage in normalized:
-                raise ValueError("stages must be unique")
-            normalized.append(stage)
+        normalized = [stage.strip().lower() for stage in values]
+        if len(normalized) != len(set(normalized)):
+            raise ValueError("stages must be unique")
+        unsupported = [stage for stage in normalized if stage not in ALLOWED_STAGES]
+        if unsupported:
+            raise ValueError(f"unsupported stages: {', '.join(unsupported)}")
         return normalized
 
 
@@ -74,6 +79,8 @@ class TaskRecord:
 
 class TaskStore:
     def __init__(self, capacity: int) -> None:
+        if capacity < 1:
+            raise ValueError("capacity must be positive")
         self.capacity = capacity
         self._records: dict[str, TaskRecord] = {}
         self._lock = Lock()
@@ -127,6 +134,29 @@ store = TaskStore(MAX_TASKS)
 semaphore = asyncio.Semaphore(MAX_CONCURRENT_TASKS)
 
 
+async def plan(value: str) -> str:
+    return f"plan: define bounded steps for {value}"
+
+
+async def execute(value: str) -> str:
+    return f"execute: process approved plan -> {value}"
+
+
+async def review(value: str) -> str:
+    return f"review: verify deterministic result -> {value}"
+
+
+HANDLERS = {"plan": plan, "execute": execute, "review": review}
+
+
+def build_orchestrator(stages: tuple[str, ...]) -> Orchestrator:
+    agents = [
+        AgentSpec(stage, f"{stage} stage", stage, AGENT_TIMEOUT_SECONDS)
+        for stage in stages
+    ]
+    return Orchestrator(agents, HANDLERS)
+
+
 def serialize(record: TaskRecord) -> dict[str, object]:
     return {
         "task_id": record.task_id,
@@ -146,18 +176,20 @@ async def execute_task(task_id: str) -> None:
             if record is None:
                 return
             store.update(task_id, status=TaskStatus.PROCESSING)
-            for index, stage in enumerate(record.stages, start=1):
-                store.update(task_id, current_stage=stage)
-                await asyncio.sleep(0)
-                store.update(task_id, completed_stages=index)
-            result = f"workflow completed {len(record.stages)} deterministic stages for objective: {record.objective}"
+            orchestrator = build_orchestrator(record.stages)
+            result = await orchestrator.run_workflow(record.objective)
             store.update(
                 task_id,
                 status=TaskStatus.COMPLETED,
                 current_stage=None,
-                result=result,
+                completed_stages=len(result.steps),
+                result=result.final_output,
             )
-            logger.info("task_completed task_id=%s stages=%d", task_id, len(record.stages))
+            logger.info("task_completed task_id=%s stages=%d duration_ms=%d", task_id, len(result.steps), result.duration_ms)
+        except (WorkflowError, ValueError) as exc:
+            logger.warning("task_failed task_id=%s error=%s", task_id, type(exc).__name__)
+            if store.get(task_id) is not None:
+                store.update(task_id, status=TaskStatus.FAILED, current_stage=None, error=str(exc))
         except Exception as exc:  # defensive task boundary
             logger.exception("task_failed task_id=%s", task_id)
             if store.get(task_id) is not None:
@@ -171,7 +203,7 @@ def health() -> dict[str, str]:
 
 @app.get("/readyz")
 def ready() -> dict[str, object]:
-    return {"status": "ready", "capacity": MAX_TASKS, "tasks": store.size()}
+    return {"status": "ready", "capacity": MAX_TASKS, "tasks": store.size(), "allowed_stages": list(ALLOWED_STAGES)}
 
 
 @app.post("/api/v1/tasks", status_code=202)
