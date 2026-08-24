@@ -4,8 +4,8 @@ import argparse
 import asyncio
 import json
 import logging
+from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import asdict, dataclass
-from typing import Awaitable, Callable, Sequence
 
 LOGGER = logging.getLogger("sky-agent-orchestrator")
 MAX_OBJECTIVE_CHARS = 10_000
