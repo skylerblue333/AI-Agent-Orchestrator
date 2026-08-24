@@ -1,44 +1,67 @@
-<!-- PORTFOLIO PROJECT PROFILE: maintained by the repository owner -->
+# Sky Agent Orchestrator
 
-## Project profile and code-audit snapshot
+A small, deterministic Python orchestration library and CLI for running a bounded sequence of injected asynchronous agent handlers.
 
-**What this is:** **AI-Agent-Orchestrator** is a public repository described as: “Multi-agent system framework for complex task solving. #SkyCoin4444 #AI #Blockchain #DevOps #Innovation” Its dominant language signals are **Python (3 files)**.
+**Status: engineering beta.** The repository implements workflow sequencing, validation, per-agent timeouts, structured results, tests, CI, dependency auditing and a non-root container. It does **not** include an LLM provider, autonomous planning, durable state, distributed execution, multi-tenancy, secrets management, production deployment or claims of enterprise/GA readiness.
 
-**Why it has value:** Its value is best understood through the implementation evidence currently present in the repository: **17 tracked files** were observed in the shallow audit, with the source structure and existing documentation providing the project’s specific context. This README does not treat a prototype, experiment, or archive as a production system without supporting evidence.
+## Why this exists
 
-**Implementation evidence:** 1 test-related file(s) detected; 2 dependency or package manifest(s) detected; 2 build/CI/infrastructure signal(s) detected; and 3 documentation or governance file(s) detected. Test filenames observed include `tests/test_main.py`. Dependency or package files include `package.json`, `requirements.txt`. Build, CI, or infrastructure signals include `Dockerfile`, `.github/workflows/ci.yml`.
+The original repository contained a three-step simulated-agent demo. The product branch preserves that concept while replacing the fixed sleep-based simulation with a reusable orchestration primitive whose handlers are explicitly supplied by the caller. This keeps provider choice and credentials outside the core engine.
 
-**Current status:** The repository is tracked on the `main` branch. The existing source tree, configuration, tests, workflows, and documentation remain authoritative for supported behavior and maturity. A code audit is not a production-readiness certification, and the presence of a test or workflow file does not establish that all checks pass.
+## Core behavior
 
-**Relationship to the wider portfolio:** This repository is one focused component of the broader Skyler Blue Spillers portfolio across AI, software engineering, cloud and DevOps, cybersecurity, blockchain, finance, education, social systems, and creative work. It may provide a service boundary, implementation pattern, experiment, archive, or reusable idea for related repositories. Treat repositories as technical dependencies only where documented interfaces and verified project requirements support that relationship.
+- 1–32 ordered agents per workflow.
+- Unique agent names and validated roles/timeouts.
+- Objectives limited to 10,000 characters.
+- Per-agent execution timeout bounded to 300 seconds.
+- Empty handler output is rejected instead of silently propagated.
+- Deterministic step history and JSON serialization.
+- No dynamic code evaluation or arbitrary plugin loading.
 
-**Quality and security note:** No obvious secret-like pattern was detected by the limited static scan; this is not a substitute for a security audit. No TODO/FIXME marker was detected in the scanned text files.
+## Run
 
----
+```bash
+python -m pip install -r requirements.txt
+python orchestrator.py "Analyze the release risks"
+```
 
-# Ai Agent Orchestrator
+The included CLI uses deterministic prefix handlers as a smoke-test/demo. Real integrations should construct `Agent` objects with application-owned async handlers.
 
-![GitHub stars](https://img.shields.io/github/stars/skylerblue333/AI-Agent-Orchestrator?style=flat-square)
-![GitHub license](https://img.shields.io/github/license/skylerblue333/AI-Agent-Orchestrator?style=flat-square)
+## Library example
 
-## 🌟 Overview
-**AI-Agent-Orchestrator** is a professional-grade project within the **SkyCoin4444** ecosystem. It focuses on delivering high-value solutions in the domain of **Python**.
+```python
+import asyncio
+from orchestrator import Agent, Orchestrator
 
-## 🚀 Key Features
-- **Scalable Architecture**: Designed for enterprise-level growth and performance.
-- **Modern Standards**: Implements best practices for clean code and maintainability.
-- **Robust Integration**: Built to work seamlessly within modern cloud-native environments.
+async def summarize(value: str) -> str:
+    return f"summary: {value}"
 
-## 🛠️ Technology Stack
-- **Primary Domain**: Python
-- **Ecosystem**: SkyCoin4444 Digital Platform
+workflow = Orchestrator([Agent("summary", "summarizer", summarize)])
+result = asyncio.run(workflow.run_workflow("review this change"))
+print(result.output)
+```
 
-## 📂 Structure
-The project is organized into a modular structure to ensure clarity and ease of development.
+## Verification
 
-## 👨‍💻 Author
-**Skyler Blue Spillers**
-*Professional Chess Player & Software Engineer*
+```bash
+python -m compileall -q orchestrator.py tests
+ruff check orchestrator.py tests
+python -m pytest -q
+pip-audit -r requirements.txt
+docker build -t sky-agent-orchestrator .
+docker run --rm --entrypoint id sky-agent-orchestrator -u
+```
 
----
-*Powered by SkyCoin4444*
+GitHub Actions enforces those gates plus a JSON CLI smoke test. The container runs as UID 10001.
+
+## SKYCOIN4444 integration boundary
+
+Use this package as an orchestration primitive behind HopeAI or other ecosystem services by injecting handlers that call those services through their documented APIs. Do not copy provider credentials or entire service implementations into this repository.
+
+## Security boundaries
+
+The engine treats objectives and handler outputs as untrusted strings. It does not execute them as code. Provider-specific prompt-injection defenses, authorization, rate limiting, tenant isolation, secrets storage and network policy belong at the integration layer and are not claimed here. See `SECURITY.md`.
+
+## Versioning
+
+The product branch is pre-1.0 engineering beta. See `CHANGELOG.md` for productization changes.
