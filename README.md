@@ -16,6 +16,8 @@ The original repository contained a three-step simulated-agent demo. The product
 - Per-agent execution timeout bounded to 300 seconds.
 - Empty handler output is rejected instead of silently propagated.
 - Deterministic step history and JSON serialization.
+- Optional per-step authorization callback using a provider-neutral `principal` / `action` / `resource` contract.
+- Policy denial happens before the associated handler executes.
 - No dynamic code evaluation or arbitrary plugin loading.
 
 ## Run
@@ -31,12 +33,20 @@ The included CLI uses deterministic prefix handlers as a smoke-test/demo. Real i
 
 ```python
 import asyncio
-from orchestrator import Agent, Orchestrator
+from orchestrator import Agent, Orchestrator, StepAuthorization
 
 async def summarize(value: str) -> str:
     return f"summary: {value}"
 
-workflow = Orchestrator([Agent("summary", "summarizer", summarize)])
+def policy(request: StepAuthorization) -> bool:
+    # Adapter point for SkyPolicy or another application-owned policy engine.
+    return request.resource == "agent:summary"
+
+workflow = Orchestrator(
+    [Agent("summary", "summarizer", summarize)],
+    principal="user:42",
+    policy_decider=policy,
+)
 result = asyncio.run(workflow.run_workflow("review this change"))
 print(result.output)
 ```
@@ -56,11 +66,13 @@ GitHub Actions enforces those gates plus a JSON CLI smoke test. The container ru
 
 ## SKYCOIN4444 integration boundary
 
-Use this package as an orchestration primitive behind HopeAI or other ecosystem services by injecting handlers that call those services through their documented APIs. Do not copy provider credentials or entire service implementations into this repository.
+Use this package as an orchestration primitive behind HopeAI or other ecosystem services by injecting handlers that call those services through their documented APIs. The optional policy callback emits a minimal `principal`, `action="agents.execute"`, `resource="agent:<name>"` contract that can be adapted to Wave-2 **SkyPolicy (#72)** without importing or duplicating the policy implementation. The callback is only an integration boundary: this library does not persist policies or provide a network authorization service.
+
+Do not copy provider credentials or entire service implementations into this repository.
 
 ## Security boundaries
 
-The engine treats objectives and handler outputs as untrusted strings. It does not execute them as code. Provider-specific prompt-injection defenses, authorization, rate limiting, tenant isolation, secrets storage and network policy belong at the integration layer and are not claimed here. See `SECURITY.md`.
+The engine treats objectives and handler outputs as untrusted strings. It does not execute them as code. Provider-specific prompt-injection defenses, authentication, rate limiting, tenant isolation, secrets storage and network policy belong at the integration layer and are not claimed here. A configured policy callback can deny a step before its handler is invoked, but that does not make this package a production authorization enforcement point. See `SECURITY.md`.
 
 ## Versioning
 
