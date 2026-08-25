@@ -10,6 +10,7 @@ from dataclasses import asdict, dataclass
 LOGGER = logging.getLogger("sky-agent-orchestrator")
 MAX_OBJECTIVE_CHARS = 10_000
 MAX_AGENTS = 32
+MAX_PRINCIPAL_CHARS = 256
 AgentHandler = Callable[[str], Awaitable[str]]
 
 
@@ -25,6 +26,22 @@ class Agent:
             raise ValueError("agent name and role must be non-empty")
         if self.timeout_seconds <= 0 or self.timeout_seconds > 300:
             raise ValueError("agent timeout_seconds must be in (0, 300]")
+
+
+@dataclass(frozen=True)
+class StepAuthorization:
+    """Provider-neutral authorization contract for a single agent step."""
+
+    principal: str
+    action: str
+    resource: str
+
+    def to_policy_request(self) -> dict[str, str]:
+        """Return the minimal principal/action/resource shape consumed by SkyPolicy."""
+        return asdict(self)
+
+
+PolicyDecider = Callable[[StepAuthorization], bool]
 
 
 @dataclass(frozen=True)
@@ -47,7 +64,13 @@ class WorkflowResult:
 class Orchestrator:
     """Execute a bounded sequence of injected asynchronous agent handlers."""
 
-    def __init__(self, agents: Sequence[Agent]) -> None:
+    def __init__(
+        self,
+        agents: Sequence[Agent],
+        *,
+        principal: str = "skyagents",
+        policy_decider: PolicyDecider | None = None,
+    ) -> None:
         if not agents:
             raise ValueError("at least one agent is required")
         if len(agents) > MAX_AGENTS:
@@ -57,7 +80,26 @@ class Orchestrator:
             raise ValueError("agent names must be unique")
         for agent in agents:
             agent.validate()
+
+        principal = principal.strip()
+        if not principal:
+            raise ValueError("principal must be non-empty")
+        if len(principal) > MAX_PRINCIPAL_CHARS:
+            raise ValueError(f"principal exceeds {MAX_PRINCIPAL_CHARS} characters")
+
         self._agents = tuple(agents)
+        self._principal = principal
+        self._policy_decider = policy_decider
+
+    def _authorize(self, agent: Agent) -> StepAuthorization:
+        request = StepAuthorization(
+            principal=self._principal,
+            action="agents.execute",
+            resource=f"agent:{agent.name.strip()}",
+        )
+        if self._policy_decider is not None and not self._policy_decider(request):
+            raise PermissionError(f"policy denied agent {agent.name!r}")
+        return request
 
     async def run_workflow(self, objective: str) -> WorkflowResult:
         objective = objective.strip()
@@ -69,6 +111,7 @@ class Orchestrator:
         context = objective
         results: list[StepResult] = []
         for agent in self._agents:
+            self._authorize(agent)
             LOGGER.info("agent_step_start agent=%s role=%s", agent.name, agent.role)
             try:
                 output = await asyncio.wait_for(
