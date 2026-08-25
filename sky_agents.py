@@ -26,7 +26,7 @@ class AgentTask:
     payload: str
     timeout_seconds: float = 30.0
 
-    def normalized(self) -> "AgentTask":
+    def normalized(self) -> AgentTask:
         task_id = _token(self.task_id, "task_id")
         agent_id = _token(self.agent_id, "agent_id")
         if not isinstance(self.payload, str):
